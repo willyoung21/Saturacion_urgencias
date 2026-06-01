@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  dashboard:
+    build: .
+    container_name: saturacion-urgencias
+    ports:
+      - "8501:8501"
+    volumes:
+      # Montar data/ y models/ como volúmenes permite reentrenar
+      # sin tener que reconstruir toda la imagen
+      - ./data:/app/data
+      - ./models:/app/models
+    environment:
+      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=200
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    restart: unless-stopped

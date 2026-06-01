@@ -1,361 +1,460 @@
-# Sistema Predictivo de Saturacion en Urgencias
+<div align="center">
 
-> **Version 0.3** — 5 niveles de severidad operativa · 3 horizontes de prediccion independientes (+1h, +3h, +6h)
->
-> Datos reales de Nuestra Cali (2024-2026) · Dashboard para coordinadores medicos
+<img src="https://img.shields.io/badge/versi%C3%B3n-0.3-blue?style=for-the-badge" />
+<img src="https://img.shields.io/badge/python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+<img src="https://img.shields.io/badge/streamlit-1.32+-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white" />
+<img src="https://img.shields.io/badge/Docker-ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
+<img src="https://img.shields.io/badge/licencia-CC%20BY--NC%204.0-lightgrey?style=for-the-badge" />
+
+# 🏥 Sistema Predictivo de Saturación — Urgencias
+
+**Anticipa el colapso del servicio con 1, 3 y 6 horas de antelación**
+
+*Datos reales · Clínica Nuestra Cali (NIT 805023423CL) · 2024 – 2026*
+
+[Ver notebook →](notebooks/modelo_severidad_urgencias_v3.ipynb) · [Reportar un problema](../../issues) · [Hoja de ruta](#12-hoja-de-ruta)
+
+</div>
+
+---
+
+## El problema en una línea
+
+> Los coordinadores de urgencias gestionan el censo de camas **de forma reactiva**, sin poder anticipar los picos de demanda antes de que el servicio colapse.
+
+El servicio opera crónicamente saturado — el **95% del tiempo está por encima de su capacidad instalada**. Con el semáforo tradicional de tres colores (Verde / Amarillo / Rojo), la alerta queda fija en rojo permanentemente y deja de ser útil. Este sistema reemplaza esa alerta inútil por una **predicción de severidad accionable**.
 
 ---
 
 ## Tabla de contenidos
 
-1. [El problema](#1-el-problema)
-2. [La solucion](#2-la-solucion)
-3. [Captura del dashboard](#3-captura-del-dashboard)
-4. [Arquitectura del sistema](#4-arquitectura-del-sistema)
-5. [Estructura del repositorio](#5-estructura-del-repositorio)
-6. [Requisitos](#6-requisitos)
-7. [Instalacion (one-click)](#7-instalacion-one-click)
-8. [Uso del dashboard](#8-uso-del-dashboard)
-9. [Modelo predictivo](#9-modelo-predictivo)
-10. [Resultados y metricas](#10-resultados-y-metricas)
-11. [Limitaciones conocidas](#11-limitaciones-conocidas)
-12. [Licencia](#12-licencia)
-13. [Hoja de ruta](#13-hoja-de-rura)
+1. [La solución](#1-la-solucion)
+2. [Métricas de rendimiento](#2-metricas-de-rendimiento)
+3. [Arquitectura](#3-arquitectura)
+4. [Estructura del repositorio](#4-estructura-del-repositorio)
+5. [Requisitos](#5-requisitos)
+6. [Instalación](#6-instalacion)
+7. [Uso del dashboard](#7-uso-del-dashboard)
+8. [Modelo predictivo](#8-modelo-predictivo)
+9. [Limitaciones conocidas](#9-limitaciones-conocidas)
+10. [Producción y despliegue](#10-produccion-y-despliegue)
+11. [Licencia](#11-licencia)
+12. [Hoja de ruta](#12-hoja-de-ruta)
 
 ---
 
-## 1. El problema
+## 1. La solución
 
-Los servicios de urgencias en Colombia operan frecuentemente por encima del **120% de su capacidad instalada**. Esta saturacion no es un evento puntual, sino un estado cronico que genera:
+En lugar de preguntar *"¿está en Rojo?"* (respuesta obvia el 95% del tiempo), el sistema pregunta **"¿qué tan grave estará en las próximas horas?"**
 
-- **Demoras en triage** que violan los tiempos establecidos por la Resolucion 256 de 2016
-- **Abandono de pacientes** antes de ser atendidos
-- **Fatiga y error humano** en el personal medico y de enfermeria
-- **Riesgos legales** para la IPS por incumplimiento de estandares de calidad
+Tres modelos Random Forest independientes analizan el estado operativo en tiempo real y predicen el **nivel de severidad** a +1h, +3h y +6h.
 
-Los coordinadores medicos y jefes de enfermeria enfrentan **"ceguera operativa"**: gestionan el censo de camas minuto a minuto de forma reactiva, sin poder anticipar los picos de demanda antes de que el servicio colapse.
+### Los 5 niveles de severidad operativa
 
----
+> Los umbrales fueron definidos a partir de la distribución real del dataset (percentiles p4, p30, p77, p97) y validados operativamente.
 
-## 2. La solucion
+| # | Nivel | Índice | % del tiempo | Acción recomendada |
+|:-:|-------|:------:|:------------:|---------------------|
+| 🟢 | **Operación normal** | < 1.0 | 4% | Sin intervención — mantener monitoreo |
+| 🟡 | **Presión moderada** | 1.0 – 1.8 | 26% | Revisar altas pendientes · Preparar refuerzos |
+| 🟠 | **Presión alta** | 1.8 – 2.8 | 47% | Activar protocolo preventivo de personal |
+| 🔴 | **Crítico** | 2.8 – 3.8 | 21% | Desviar ambulancias · Movilizar guardia de reserva |
+| ⚫ | **Colapso** | > 3.8 | 3% | Activar plan de crisis · Notificar dirección médica |
 
-Implementamos **3 modelos de Machine Learning independientes** (Random Forest) que analizan el estado en tiempo real del servicio para predecir el nivel de severidad operativa en **3 horizontes**: +1 hora, +3 horas y +6 horas.
-
-### 5 niveles de severidad operativa
-
-| Nivel | Rango | % del tiempo | Color | Accion recomendada |
-|---|---|---|---|---|
-| Verde_Amarillo | < 1.0 | 4% | 🟢 | Operacion normal · Mantener monitoreo |
-| Presion_Moderada | 1.0 - 1.8 | 26% | 🟡 | Preparar refuerzos · Revisar altas |
-| Presion_Alta | 1.8 - 2.8 | 47% | 🟠 | Activar protocolo preventivo |
-| Critico | 2.8 - 3.8 | 21% | 🔴 | Activar contingencia · Movilizar personal |
-| Colapso | > 3.8 | 3% | 🟣 | Activar plan de crisis hospitalario |
-
-Los umbrales estan basados en la **distribucion real del dataset** (percentiles ~4%, 30%, 77%, 97%).
-
-### 3 horizontes de prediccion
-
-| Horizonte | Balanced Accuracy | F1-macro | Utilidad operativa |
-|---|---|---|---|
-| **+1h** | **0.880** | **0.888** | Reaccion inmediata |
-| **+3h** | **0.781** | **0.818** | Planificacion optima (recomendado) |
-| **+6h** | **0.745** | **0.791** | Vision estrategica del turno |
-
----
-
-
-## 4. Arquitectura del sistema
+### ¿Por qué 5 niveles en vez de 3?
 
 ```
-Power BI / Microsoft Fabric
-       │
-       ▼
-  extraer_datos.ps1 (DAX queries)
-       │
-       ▼
-  [triage_metricas_horarias.csv, triage_timestamps.csv, urgencias_timestamps.csv]
-       │
-       ▼
-  preparar_dataset.py (ETL · prevencion de data leakage)
-       │
-       ▼
-  dataset_train.csv  (20,667 filas · 24 columnas)
-       │
-       ▼
-  retrain_model.py  /  modelo_severidad_urgencias_v3.ipynb
-       │
-       ├──► modelo_rf_1h.pkl   (Random Forest +1 hora)
-       ├──► modelo_rf_3h.pkl   (Random Forest +3 horas)
-       ├──► modelo_rf_6h.pkl   (Random Forest +6 horas)
-       ├──► config_v3.pkl      (Umbrales, niveles, colores)
-       └──► features_v3.pkl    (Lista de 24 features)
-       │
-       ▼
-  src/app.py  (Streamlit Dashboard)
-       │
-       ▼
-  Navegador web (http://localhost:8501)
+Semáforo anterior (3 colores)        Nuevo enfoque (5 niveles)
+─────────────────────────────        ──────────────────────────
+🟢 Verde    →   1%  del tiempo       🟢 Operación normal  →  4%
+🟡 Amarillo →   4%  del tiempo       🟡 Presión moderada  → 26%
+🔴 Rojo     →  95%  del tiempo       🟠 Presión alta      → 47%
+                                     🔴 Crítico           → 21%
+⚠️  Alarma fija = nadie reacciona    ⚫ Colapso           →  3%
+```
+
+Con 5 niveles todas las categorías tienen representación real, las métricas son informativas y el personal tiene **protocolos diferenciados** para cada estado.
+
+---
+
+## 2. Métricas de rendimiento
+
+### Clasificación — test holdout (últimos 90 días, nunca vistos)
+
+| Horizonte | Balanced Accuracy | F1-macro | Uso recomendado |
+|:---------:|:-----------------:|:--------:|-----------------|
+| **+1h** | **0.880** | **0.888** | Alertas inmediatas al coordinador |
+| +3h | 0.781 | 0.818 | ⭐ Planificación del turno en curso |
+| +6h | 0.745 | 0.791 | Visión estratégica — turno siguiente |
+
+> **¿Por qué Balanced Accuracy y no accuracy?**  
+> Con clases desbalanceadas, predecir siempre "Presión Alta" daría 47% de accuracy — una cifra alta pero inútil. Balanced Accuracy promedia el recall de cada clase y no se infla por la clase mayoritaria.
+
+### Regresión — validación cruzada temporal (5 folds)
+
+| Horizonte | MAE | RMSE | R² | MASE |
+|:---------:|:---:|:----:|:--:|:----:|
+| +1h | 0.161 | 0.195 | 0.880 | 1.47 |
+| +3h | 0.218 | 0.270 | 0.824 | 2.07 |
+| +6h | 0.269 | 0.335 | 0.754 | 2.63 |
+
+> **Nota sobre MASE > 1.0:** la saturación hospitalaria tiene fuerte autocorrelación (el estado de ahora predice el de dentro de una hora casi perfectamente). El modelo naive de persistencia es difícil de superar en CV, pero los modelos sí aportan valor diferencial en la **clasificación por niveles**, especialmente para detectar transiciones hacia Crítico y Colapso.
+
+---
+
+## 3. Arquitectura
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 Power BI / Microsoft Fabric                 │
+│                  Dataset de urgencias                       │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ DAX queries
+                            ▼
+                   extraer_datos.ps1
+                            │
+           ┌────────────────┼────────────────┐
+           ▼                ▼                ▼
+  triage_metricas   triage_timestamps  urgencias_timestamps
+  _horarias.csv         .csv               .csv
+           └────────────────┬────────────────┘
+                            │ ETL · sin data leakage
+                            ▼
+                  preparar_dataset.py
+                            │
+                            ▼
+              dataset_train.csv  (20,667 filas · 24 cols)
+                            │
+               ┌────────────┴────────────┐
+               ▼                         ▼
+   modelo_severidad_v3.ipynb      retrain_model.py
+   (exploración + validación)     (producción)
+               └────────────┬────────────┘
+                            │
+          ┌─────────────────┼─────────────────┐
+          ▼                 ▼                 ▼
+  modelo_rf_1h.pkl  modelo_rf_3h.pkl  modelo_rf_6h.pkl
+          │                 │                 │
+          └─────────────────┼─────────────────┘
+                            │
+                      config_v3.pkl
+                     features_v3.pkl
+                            │
+                            ▼
+                    src/app.py  (Streamlit)
+                            │
+                            ▼
+                 http://localhost:8501
 ```
 
 ### Pipeline de datos
 
-1. **Extraccion**: Power BI → DAX queries → archivos CSV
-2. **ETL**: `preparar_dataset.py` limpia, alinea temporalmente y genera lags (sin data leakage)
-3. **Feature engineering**: encoding ciclico (seno/coseno) para hora y dia, presion combinada del sistema
-4. **Entrenamiento**: 3 Random Forest independientes con validacion cruzada temporal (TimeSeriesSplit, 5 folds)
-5. **Dashboard**: Streamlit carga los modelos y predictores, muestra estado actual + predicciones
+| Paso | Script | Qué hace |
+|:----:|--------|----------|
+| 1 | `extraer_datos.ps1` | Consulta Power BI/Fabric con DAX y descarga 3 CSVs |
+| 2 | `preparar_dataset.py` | Limpia, alinea temporalmente, genera lags sin data leakage |
+| 3 | `retrain_model.py` | Entrena los 3 RF con TimeSeriesSplit y exporta artefactos |
+| 4 | `app.py` | Carga modelos y sirve el dashboard en tiempo real |
 
 ---
 
-## 5. Estructura del repositorio
+## 4. Estructura del repositorio
 
 ```
 saturacion-urgencias/
 │
 ├── src/
-│   ├── app.py                       # Dashboard Streamlit (758 lines)
-│   ├── preparar_dataset.py          # ETL pipeline
-│   ├── extraer_datos.ps1            # Extraccion Power BI / Fabric
-│   └── queries_extraccion.md        # Documentacion de queries DAX
+│   ├── app.py                    # Dashboard Streamlit (758 líneas)
+│   ├── preparar_dataset.py       # ETL pipeline
+│   ├── extraer_datos.ps1         # Extracción Power BI / Fabric
+│   └── queries_extraccion.md     # Documentación de queries DAX
 │
 ├── notebooks/
-│   ├── modelo_severidad_urgencias_v3.ipynb  # Notebook v3 (33 celdas)
-│   ├── modelo_saturacion_urgencias_v2.ipynb  # Notebook v2 (historico)
-│   ├── modelo_saturacion_urgencias.ipynb     # Notebook v1 (historico)
-│   ├── retrain_model.py                     # Script de reentrenamiento
-│   └── build_v3.py                          # Generador del notebook
+│   ├── modelo_severidad_urgencias_v3.ipynb   # ← Notebook principal (v3)
+│   ├── modelo_saturacion_urgencias_v2.ipynb  # Histórico v2
+│   ├── modelo_saturacion_urgencias.ipynb     # Histórico v1
+│   └── retrain_model.py                      # Script de reentrenamiento
 │
-├── data/                             # ★ Datos (en .gitignore)
-│   └── dataset_train.csv             #   20,667 filas
+├── data/                          # ★ No incluido en el repo (ver .gitignore)
+│   └── dataset_train.csv          #   20,667 filas · generado por preparar_dataset.py
 │
-├── models/                           # ★ Modelos (en .gitignore)
-│   ├── modelo_rf_1h.pkl              #   RF +1h (~50 MB)
-│   ├── modelo_rf_3h.pkl              #   RF +3h (~50 MB)
-│   ├── modelo_rf_6h.pkl              #   RF +6h (~50 MB)
-│   ├── config_v3.pkl                 #   Umbrales y configuracion
-│   └── features_v3.pkl               #   Lista de features
+├── models/                        # ★ No incluido en el repo (ver .gitignore)
+│   ├── modelo_rf_1h.pkl           #   ~50 MB
+│   ├── modelo_rf_3h.pkl           #   ~50 MB
+│   ├── modelo_rf_6h.pkl           #   ~50 MB
+│   ├── config_v3.pkl              #   Umbrales, niveles, colores
+│   └── features_v3.pkl            #   Lista de 24 features en orden exacto
 │
-├── setup.sh                          # Instalacion one-click
-├── pyproject.toml                    # Dependencias Python
-├── uv.lock                           # Lockfile reproducible
+├── Dockerfile                     # Imagen lista para producción
+├── docker-compose.yml             # Orquestación local / servidor interno
+├── pyproject.toml                 # Dependencias Python
+├── uv.lock                        # Lockfile reproducible
 ├── .gitignore
-├── LICENSE                           # CC BY-NC 4.0
-└── README.md                         # Este archivo
+├── LICENSE                        # CC BY-NC 4.0
+└── README.md
 ```
 
-> **★ Datos y modelos no estan incluidos en el repositorio** por peso. Consulta la seccion [Instalacion](#7-instalacion-one-click) para generarlos.
+> **★ Datos y modelos** no están en el repositorio por peso (~150 MB modelos + datos privados de pacientes). Al hacer `docker compose up` los modelos se entrenan automáticamente durante el build.
 
 ---
 
-## 6. Requisitos
+## 5. Requisitos
 
-- **Python 3.10 o superior**
-- **UV** (gestor de paquetes Python) — [Instalar UV](https://docs.astral.sh/uv/)
-- **Git Bash** (Windows) o terminal bash (Linux/macOS)
-- ~2 GB de espacio en disco (modelos incluidos)
-- Navegador web moderno (Chrome, Firefox, Edge)
+| Requisito | Versión | Notas |
+|-----------|:-------:|-------|
+| Docker | 24+ | [Instalar Docker](https://docs.docker.com/get-docker/) |
+| RAM | 4 GB | 8 GB recomendado para entrenamiento |
+| Disco | 2 GB | Modelos (~150 MB) + datos + imagen Docker |
 
 ### Dependencias principales
 
-| Paquete | Version minima | Uso |
-|---|---|---|
-| streamlit | >= 1.32.0 | Dashboard web |
-| pandas | >= 2.0.0 | Manipulacion de datos |
-| numpy | >= 1.24.0 | Computacion numerica |
-| scikit-learn | >= 1.3.0 | Random Forest + metricas |
-| plotly | >= 5.18.0 | Graficos interactivos |
-| matplotlib | >= 3.7.0 | Graficos estaticos (notebook) |
-| seaborn | >= 0.12.0 | Visualizacion (notebook) |
+| Paquete | Versión | Uso |
+|---------|:-------:|-----|
+| `streamlit` | ≥ 1.32 | Dashboard web |
+| `scikit-learn` | ≥ 1.3 | Random Forest + métricas |
+| `pandas` | ≥ 2.0 | Manipulación de datos |
+| `plotly` | ≥ 5.18 | Gráficos interactivos |
+| `matplotlib` / `seaborn` | ≥ 3.7 / ≥ 0.12 | Visualización en notebook |
 
 ---
 
-## 7. Instalacion (one-click)
+## 6. Instalación
 
-### Paso 1: Clonar el repositorio
+### Una línea — Docker (recomendado)
 
 ```bash
-git clone https://github.com/tu-usuario/saturacion-urgencias.git
-cd saturacion-urgencias
+git clone https://github.com/willyoung21/Saturacion_urgencias.git
+cd Saturacion_urgencias
+docker compose up
 ```
 
-### Paso 2: Ejecutar el setup
+Esto:
+1. Construye la imagen con UV y Python 3.11
+2. Instala todas las dependencias
+3. Entrena los 3 modelos automáticamente (2–5 min)
+4. Inicia el dashboard en `http://localhost:8501`
+
+La primera vez tomará ~5 minutos (descargar base image + instalar deps + entrenar). Las siguientes serán instantáneas gracias al caché de Docker.
+
+### Sin Docker — desarrollo local
 
 ```bash
-# En Git Bash (Windows), Linux o macOS:
-bash setup.sh
-```
+# 1. Clonar
+git clone https://github.com/willyoung21/Saturacion_urgencias.git
+cd Saturacion_urgencias
 
-El script:
-1. Verifica que UV este instalado (si no, lo instala)
-2. Ejecuta `uv sync` para instalar todas las dependencias
-3. Pregunta si deseas entrenar los modelos (recomendado: si)
-   - El entrenamiento toma ~2-5 minutos
-   - Genera 3 modelos en `models/`
+# 2. Instalar dependencias (requiere Python 3.11+ y UV)
+uv sync
 
-### Paso 3: Iniciar el dashboard
+# 3. Entrenar modelos
+uv run python notebooks/retrain_model.py
 
-```bash
+# 4. Iniciar dashboard
 uv run streamlit run src/app.py
 ```
 
-O con el entorno virtual activado:
+### Reentrenamiento con datos nuevos
 
 ```bash
-# Linux/macOS
-source .venv/bin/activate
-streamlit run src/app.py
+# Con Docker
+docker compose run dashboard uv run python notebooks/retrain_model.py
 
-# Windows (PowerShell)
-.venv\Scripts\activate
-streamlit run src/app.py
+# Sin Docker
+uv run python notebooks/retrain_model.py
 ```
 
-Esto abrira automaticamente el navegador en `http://localhost:8501`.
+---
+
+## 7. Uso del dashboard
+
+El dashboard está diseñado para ser operado por coordinadores médicos sin conocimiento técnico.
+
+### Secciones del panel principal
+
+| Sección | Qué muestra | Cuándo usarla |
+|---------|-------------|---------------|
+| **Banner de severidad** | Nivel actual, índice numérico, tendencia y acción recomendada | Primera vista al turno |
+| **Métricas operativas** | Cola, camas, triage/hora, abandonos — con delta respecto a la hora anterior | Evaluación rápida |
+| **Gráfica histórica + predicción** | Últimas 12h reales + proyección a +1h/+3h/+6h | Antes del cambio de guardia |
+| **Tarjetas de predicción** | Nivel esperado por horizonte con barra de progreso y tendencia | Planificar refuerzos |
+| **KPIs de calidad** | 5 indicadores con estado OK / En riesgo / Bajo | Reporte a coordinación |
+| **Heatmap histórico** | Saturación promedio por hora y día de semana | Planificación de turnos |
+
+### Sidebar — simulación histórica
+
+Selecciona cualquier **fecha y hora** del período 2024–2026 para ver qué habría mostrado el dashboard en ese momento. Útil para revisar incidentes pasados o mostrar el sistema en reuniones.
+
+### Interpretación de la tendencia
+
+| Indicador | Significado | Acción sugerida |
+|:---------:|-------------|-----------------|
+| ⬆️ **Al alza** | La saturación aumentará en las próximas horas | Activar refuerzos preventivamente |
+| ➡️ **Estable** | El sistema se mantendrá en el nivel actual | Mantener monitoreo |
+| ⬇️ **A la baja** | La presión disminuirá | Relajar protocolos si aplica |
 
 ---
 
-## 8. Uso del dashboard
-
-### Panel principal
-
-| Seccion | Que muestra | Cuando usarla |
-|---|---|---|
-| **Banner de severidad** | Estado actual, indice, tendencia, accion recomendada | Al abrir el dashboard (vista principal) |
-| **Metricas** | Cola, camas, triage, abandonos con delta | Evaluacion rapida del turno |
-| **Semafaro** | Nivel de severidad con indice numerico | Identificar el estado de un vistazo |
-| **Grafica 12h + prediccion** | Historico reciente + proyeccion 3 horizontes | Antes de cambio de guardia |
-| **Tarjetas de prediccion** | +1h, +3h, +6h con barra, badge y tendencia | Planificar refuerzos por hora |
-| **KPIs de calidad** | 5 indicadores con estado OK/En riesgo/Bajo | Reporte a coordinacion |
-| **Heatmap historico** | Saturacion promedio por hora y dia de semana | Planificacion de turnos y recursos |
-
-### Sidebar
-
-En el panel izquierdo puedes:
-- Seleccionar una **fecha** y **hora** para simular un turno historico
-- Ver el estado que el dashboard hubiera mostrado en ese momento
-
-### Interpretacion de la tendencia
-
-| Flecha | Significado | Accion sugerida |
-|---|---|---|
-| ⬆ Al alza | La saturacion esta aumentando | Preparar recursos adicionales |
-| ➡ Estable | La saturacion se mantiene | Mantener monitoreo |
-| ⬇ A la baja | La saturacion esta disminuyendo | Relajar protocolos si aplica |
-
----
-
-## 9. Modelo predictivo
+## 8. Modelo predictivo
 
 ### Algoritmo
 
-**Random Forest Regressor** — 3 modelos independientes (uno por horizonte).
+**Random Forest Regressor** — tres modelos independientes, uno por horizonte.
 
-Cada modelo usa 300 arboles, profundidad maxima 12 y min_samples_leaf=5.
+Cada modelo predice el **índice de saturación numérico** futuro. La clasificación en niveles de severidad se aplica después, usando los umbrales definidos en la tabla de la sección 1.
 
-### Features (24 total)
+```
+estado actual del sistema  →  RF +1h  →  índice numérico  →  nivel de severidad
+                           →  RF +3h  →  índice numérico  →  nivel de severidad
+                           →  RF +6h  →  índice numérico  →  nivel de severidad
+```
 
-**Base (18):**
-- Cantidad de triage, cola de espera, camas ocupadas, abandonos, capacidad
-- Lags de triage (1h, 2h, 3h) y saturacion (1h, 3h, 6h)
-- Lags de abandonos, cola, camas
-- Tiempos de espera (turnero, consulta)
-- Porcentajes de cumplimiento (oportunidad triage, consulta T2)
-- Indicador de festivo
+### Features (25 en total)
 
-**Encoding ciclico (4):**
-- `hora_sin`, `hora_cos` — representacion seno/coseno de la hora (0-23)
-- `dia_sin`, `dia_cos` — representacion seno/coseno del dia de la semana (0-6)
+**Estado actual — señales en tiempo real (6):**
+```
+saturacion_idx, cant_triage, cola_esperando_inicio_hora,
+camas_ocupadas, capacidad_hora, abandonos_triage
+```
 
-Esto evita el salto artificial 23h → 0h y Dom → Lun.
+**Tendencia reciente — lags del pasado (9):**
+```
+cant_triage_lag1h/2h/3h
+saturacion_lag1h/3h/6h
+abandonos_lag1h, cola_lag1h, camas_ocupadas_lag1h
+```
 
-**Presion de sistema (1):**
-- `presion_sistema = cola + camas_ocupadas` — senal unificada de tension
+**Calidad de atención — señales adelantadas (4):**
+```
+tiempo_turnero_min, pct_cumpl_oportunidad_triage,
+pct_cumpl_consulta_t2, tiempo_consulta_min
+```
 
-### Validacion
+**Estacionalidad cíclica (4) + festivos (1) + presión combinada (1):**
+```
+hora_sin, hora_cos, dia_sin, dia_cos   ← encoding circular, evita salto 23h→0h
+es_festivo
+presion_sistema = cola + camas_ocupadas
+```
 
-**TimeSeriesSplit** con 5 folds (sin shuffle) para respetar el orden temporal.
+### Validación
 
-### Metricas
-
-| Metrica | Que mide | Por que es importante |
-|---|---|---|
-| **MASE** | Error escalado contra naive (persistencia) | < 1.0 significa que el modelo supera a "no hay cambio" |
-| **Balanced Accuracy** | Promedio del recall por clase | No se infla por clase mayoritaria |
-| **F1-macro** | Promedio de F1 por clase | Equilibrio precision-recall en todas las clases |
-
----
-
-## 10. Resultados y metricas
-
-### Validacion cruzada (5 folds)
-
-| Horizonte | MAE | RMSE | R² | MASE |
-|---|---|---|---|---|
-| +1h | 0.161 | 0.195 | 0.880 | 1.47 |
-| +3h | 0.218 | 0.270 | 0.824 | 2.07 |
-| +6h | 0.269 | 0.335 | 0.754 | 2.63 |
-
-### Clasificacion (5 niveles) — test holdout
-
-| Horizonte | Balanced Accuracy | F1-macro |
-|---|---|---|
-| **+1h** | **0.880** | **0.888** |
-| +3h | 0.781 | 0.818 |
-| +6h | 0.745 | 0.791 |
-
-### Distribucion de severidad en el dataset
-
-| Nivel | Horas | % del total |
-|---|---|---|
-| Verde_Amarillo | 817 | 4.0% |
-| Presion_Moderada | 5,312 | 25.7% |
-| Presion_Alta | 9,634 | 46.6% |
-| Critico | 4,377 | 21.2% |
-| Colapso | 527 | 2.5% |
-
-### Interpretacion
-
-- **+1h es altamente predictivo** (BA=0.88) — ideal para alertas inmediatas
-- **+3h es el punto optimo** entre precision y utilidad operativa — recomendado para planificacion
-- **+6h tiene rendimiento aceptable** pero con mayor incertidumbre — usar como referencia, no como decision unica
-- El **MASE > 1.0** en todos los horizontes indica que la saturacion tiene una fuerte componente autoregresiva que el modelo naive (persistencia) captura parcialmente, pero nuestros modelos agregan valor predictivo real
+- **TimeSeriesSplit (5 folds):** cada fold entrena con el pasado y valida con el futuro inmediato. Nunca se usa información del futuro para entrenar.
+- **Test holdout:** últimos 90 días del dataset, completamente separados durante el entrenamiento.
 
 ---
 
-## 11. Limitaciones conocidas
+## 9. Limitaciones conocidas
 
-### Desbalance de clases
-La clase Verde_Amarillo representa solo el 4% del dataset. La prediccion de niveles bajos de saturacion es inherentemente dificil.
-
-### Rendimiento en +6h
-El MASE de 2.63 sugiere que la predictibilidad se degrada significativamente mas alla de 3 horas. Considerar +6h como tendencia, no como prediccion exacta.
-
-### Sin datos en tiempo real
-El dashboard usa datos historicos simulados. La conexion a datos en tiempo real requiere integracion con el sistema de informacion hospitalaria.
-
-### Sin memoria entre sesiones
-Cada prediccion parte de los ultimos valores conocidos. No hay acumulacion de historial entre ejecuciones.
-
-### Variables externas no incluidas
-No se incorporan clima, eventos locales (conciertos, partidos), ni picos epidemiologicos (gripe, dengue).
-
-### Sin validacion clinica
-El modelo fue entrenado con datos historicos reales pero no ha sido revisado por coordinadores medicos ni validado en operacion paralela.
+| Limitación | Impacto | Mitigación posible |
+|------------|:-------:|--------------------|
+| `Verde_Amarillo` = 4% del dataset | Recall bajo en niveles bajos de saturación | Oversampling o ajuste de pesos de clase |
+| MASE > 1.0 en CV | El naive de persistencia es difícil de superar a corto plazo | Los modelos compensan en clasificación de transiciones |
+| Sin datos en tiempo real | El dashboard usa datos históricos simulados | Integración con HIS (Historia Clínica Electrónica) |
+| Sin variables externas | No incluye clima, epidemias, eventos locales | Feature engineering con datos externos (SIVIGILA, eventos) |
+| Sin validación clínica formal | No revisado por coordinadores en operación paralela | Piloto de 30 días en paralelo antes de producción |
+| Drift del modelo | El comportamiento del sistema puede cambiar con el tiempo | Reentrenamiento mensual automatizado |
 
 ---
 
-## 12. Licencia
+## 10. Producción y despliegue
+
+El `Dockerfile` multi-etapa del repositorio produce una imagen autónoma lista para cualquier entorno.
+
+### Opción A — Nube (AWS, Azure, GCP)
+
+```bash
+# Construir y subir a un registry
+docker build -t saturacion-urgencias .
+docker tag saturacion-urgencias mi-registry.azurecr.io/saturacion-urgencias
+docker push mi-registry.azurecr.io/saturacion-urgencias
+
+# Desplegar desde el registry
+# AWS → ECS (Fargate)
+# Azure → App Service / Container Instances
+# GCP  → Cloud Run
+```
+
+Cada servicio requiere configurar:
+- Puerto expuesto: `8501`
+- Variables de entorno: `STREAMLIT_SERVER_MAX_UPLOAD_SIZE=200`
+- Healthcheck: `GET /` en puerto 8501
+- Memoria mínima: 2 GB
+
+### Opción B — Servidor interno de la clínica
+
+Con `docker-compose.yml` ya configurado:
+
+```bash
+docker compose up -d
+```
+
+El servicio se reinicia automáticamente si falla (`restart: unless-stopped`). Para mantenerlo actualizado:
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+### Opción C — Sin Docker
+
+```bash
+# systemd service unit (ejemplo)
+[Service]
+ExecStart=/usr/bin/uv run streamlit run /opt/saturacion-urgencias/src/app.py --server.port=8501 --server.address=0.0.0.0
+WorkingDirectory=/opt/saturacion-urgencias
+Restart=always
+User=app
+```
+
+### Integración con datos en tiempo real
+
+El paso pendiente más importante para producción es conectar el dashboard al sistema de información hospitalaria (HIS):
+
+```
+HIS / HL7 FHIR  →  preparar_dataset.py  →  app.py (predicción en tiempo real)
+```
+
+### Reentrenamiento automático
+
+```bash
+# Con Docker (cron mensual)
+0 2 1 * * cd /opt/saturacion-urgencias && docker compose run dashboard uv run python notebooks/retrain_model.py
+
+# Sin Docker (cron mensual)
+0 2 1 * * cd /opt/saturacion-urgencias && uv run python notebooks/retrain_model.py
+```
+
+---
+
+## 11. Licencia
 
 **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)**
 
-Copyright (c) 2026
+Uso permitido únicamente para fines académicos y no comerciales.
 
-Uso permitido unicamente para fines academicos y no comerciales.
+- ✅ Compartir y redistribuir el material
+- ✅ Adaptar, transformar y construir sobre el material
+- ❌ Uso comercial sin autorización expresa
+- ℹ️ Atribución requerida con enlace a la licencia
 
-- **Compartir** — copiar y redistribuir el material en cualquier medio o formato
-- **Adaptar** — remezclar, transformar y construir sobre el material
+---
 
-**Atribucion requerida** — credito apropiado, enlace a la licencia, indicacion de cambios.
-**Uso no comercial** — no se puede usar con fines comerciales.
+## 12. Hoja de ruta
 
+- [ ] Piloto de validación clínica (30 días en paralelo)
+- [ ] Integración con HIS en tiempo real (HL7/FHIR)
+- [ ] Alertas por WhatsApp / correo cuando se predice Colapso
+- [ ] Ajuste de umbrales con retroalimentación del coordinador médico
+- [ ] Reentrenamiento automático mensual vía cron
+- [ ] Incorporar variables externas (SIVIGILA, festivos extendidos, eventos)
+- [ ] Panel de monitoreo de drift del modelo
+- [ ] Internacionalización (i18n) del dashboard
 
+---
+
+<div align="center">
+
+Desarrollado con datos reales de Urgencias Nuestra Cali · 2024–2026  
+Clínica Nuestra Cali · NIT 805023423CL · Cali, Colombia
+
+</div>
