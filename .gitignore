@@ -1,3 +1,7 @@
 .venv/
-data/
+.venv_old/
 __pycache__/
+*.pyc
+data/*.csv
+models/*.pkl
+.notebook_checkpoints/

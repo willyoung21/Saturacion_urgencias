@@ -1,0 +1,2 @@
+modelo,MAE,RMSE,R2,precision_semaforo,umbral_verde,umbral_rojo,periodo_test_dias,n_train,n_test
+RandomForest,0.0428,0.1349,0.9451,99.7,1.5,2.5,90,18589,2078
